@@ -21,33 +21,41 @@ matplotlib.rcParams['timezone'] = 'Asia/Jakarta'
 # TODO: 10/9 harga beli
 
 class Agent(abc.ABC):
-    def __init__(self, ticker, fig, ax, df):
-        self.ticker = ticker
+    buy_signal = 1
+    sell_signal = -1
+
+    def __init__(self, df, fig=None, ax=None):
+        self.df = df
+
         self.fig = fig
         self.ax = ax
+        self.render_n = 10
+        self.render_i = 0
+        
+        self.do_render = True
+        if fig is None or ax is None:
+            self.do_render = False
         self.first_render = True
-        self.df = df
         self.signals = []
         self.signal = 0
 
     @log.has_log
     def render(self):
-        log.log('clearing fig')
-        self.ax.cla()
-        timer.elapsed()
+        self.render_i = (self.render_i+1) % self.render_n
+        if self.render_i != 0:
+            return
 
-        self.ax.title.set_text(self.ticker)
+        self.ax.cla()
+
         self.ax.tick_params(labelrotation=45)
         self.ax.xaxis.set_major_formatter(pldate.DateFormatter('%H:%M'))
         self.ax.xaxis.set_major_locator(plticker.MultipleLocator(base=0.03))
 
-        log.log('plotting')
-        self.buy_sig  = [i for i, state in enumerate(self.signals) if state ==  1 and (i==0 or self.signals[i-1]!= 1)]
-        self.sell_sig = [i for i, state in enumerate(self.signals) if state == -1 and (i==0 or self.signals[i-1]!=-1)]
+        self.buy_sig  = [i for i, state in enumerate(self.signals) if state == Agent.buy_signal ]# and (i==0 or self.signals[i-1]!=self.signals[i])]
+        self.sell_sig = [i for i, state in enumerate(self.signals) if state == Agent.sell_signal]# and (i==0 or self.signals[i-1]!=self.signals[i])]
         self.ax.plot(self.df.close, color='k', lw=1.)
         self.ax.plot(self.df.close, '^', markersize=10, color='g', label = 'buying signal',  markevery = self.buy_sig)
         self.ax.plot(self.df.close, 'v', markersize=10, color='r', label = 'selling signal', markevery = self.sell_sig)
-        timer.elapsed()
 
         plt.pause(0.001)
 
@@ -56,20 +64,13 @@ class Agent(abc.ABC):
             self.first_render = False
 
     @abc.abstractmethod
-    def get_signals(self): pass
+    def _update(self, new_data=None): pass
 
     def update(self, new_data=None):
-        if new_data is not None:
-            log.log('update data')
-            self.df = self.df.append(new_data)
-            self.df = self.df[-600:]
-            timer.elapsed()
+        self.signal = 0
+        self._update(new_data)
 
-        log.log('generating signals')
-        self.get_signals()
-        timer.elapsed()
-
-        log.log('rendering')
-        self.render()
+        if self.do_render:
+            self.render()
 
         return self.signal

@@ -15,19 +15,18 @@ import pandas as pd
 import pytz
 import requests
 
-import agent
+from agent import Agent
 from helpers import logger as log
 from helpers import timer
 
 
-@agent.Agent.register
-class ABCD(agent.Agent):
-    def __init__(self, ticker, fig, ax, df):
-        super().__init__(ticker, fig, ax, df)
+@Agent.register
+class ABCD(Agent):
+    def __init__(self, df, fig=None, ax=None):
+        super().__init__(df, fig, ax)
     @log.has_log
-    def abcd(self, skip_loop = 13, ma = 27):
-        trend = self.df.close
-        ma = pd.Series(trend).rolling(ma).mean().values
+    def abcd(self, skip_loop = 15, ma = 29):
+        ma = pd.Series(self.df.close).rolling(ma).mean().values
         n = ma.shape[0]
 
         gt = []
@@ -53,7 +52,7 @@ class ABCD(agent.Agent):
                                 bd_set.add(b)
                                 bd_set.add(d)
 
-        signal = np.zeros(len(trend))
+        signal = np.zeros(len(self.df.close))
         buy = list(ac_set - bd_set)
         sell = list(bd_set - ac_set)
 
@@ -61,7 +60,18 @@ class ABCD(agent.Agent):
         signal[sell] = -1.0
 
         self.signals = signal
-        self.signal = signal[-1]
+        for i in range(1, 20):
+            if signal[-i] != 0:
+                curr = self.df.close[-1]
+                past = self.df.close[-i]
+                if abs(curr-past)/curr < 0.01 and abs(curr-ma[-1])/ma[-1] > 0.0003:
+                    self.signal = signal[-i]
+                    if signal[-i] == Agent.buy_signal:
+                        return
     
-    def get_signals(self):
+    def _update(self, new_data=None):
+        if new_data is not None:
+            self.df = self.df.append(new_data)
+            self.df = self.df[-300:]
+
         self.abcd()
