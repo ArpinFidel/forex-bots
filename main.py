@@ -41,7 +41,7 @@ class Bot:
     space_order = 12
     space_loss  = 9
 
-    def __init__(self, name, agent, data, fig, ax, render_n=0, a_fig=None, a_ax=None):
+    def __init__(self, name, agent, data, fig, ax, render_n=1, a_fig=None, a_ax=None):
         self.name = name
         self.agent = agent(data, a_fig, a_ax)
         self.data = data
@@ -52,6 +52,8 @@ class Bot:
         self.render_i = 0
 
         self.gains = [0, 0]
+        self.min_gain = 0
+        self.max_gain = 0
 
         self.win_n = [0, 0]
         self.lose_n = [0, 0]
@@ -93,6 +95,8 @@ class Bot:
     def close(self, order):
         self.closed.append(order)
         self.gains[order.type] += order.get_gain()
+        self.max_gain = max(self.max_gain, sum(self.gains))
+        self.min_gain = min(self.min_gain, sum(self.gains))
         if order.get_gain() < 0:
             self.lose_n[order.type] += 1
         else:
@@ -120,6 +124,7 @@ class Bot:
             if order.is_stop() or order.is_take():
                 self.close(order)
                 self.open.pop(i)
+
                 if order.is_stop():
                     self.since_loss = 0
                 
@@ -129,7 +134,8 @@ class Bot:
                     print("BUY : {:4d} {:4d} = {:.3f} {:.3f}".format(self.win_n[0], self.lose_n[0], self.win_n[0]/(self.win_n[0]+self.lose_n[0]), self.lose_n[0]/(self.win_n[0]+self.lose_n[0])))
                 if self.win_n[1]+self.lose_n[1] > 0:
                     print("SELL: {:4d} {:4d} = {:.3f} {:.3f}".format(self.win_n[1], self.lose_n[1], self.win_n[1]/(self.win_n[1]+self.lose_n[1]), self.lose_n[1]/(self.win_n[1]+self.lose_n[1])))
-
+                print("MIN %.4f"%self.min_gain)
+                print("MAX %.4f"%self.max_gain)
         if len(self.open) < Bot.max_open \
         and (len(self.open) == 0 or self.since_order > Bot.space_order) \
         and self.since_loss > Bot.space_loss:
@@ -151,6 +157,8 @@ class Bot:
         if self.render_i != 0:
             return
 
+        timer.start()
+        
         self.ax.cla()
 
         self.ax.tick_params(labelrotation=45)
@@ -165,6 +173,13 @@ class Bot:
 
         plt.pause(0.0001)
 
+        elapsed = timer.get_elapsed()
+        x = self.render_n/elapsed
+        if x < 200:
+            self.render_n += int((100/x-1)*self.render_n-1)
+        else:
+            self.render_n = int(max(1, self.render_n/x))
+        # if self.first_render: 
         # if self.first_render: 
         #     plt.legend()
         #     self.first_render = False

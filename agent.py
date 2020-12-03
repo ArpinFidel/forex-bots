@@ -45,6 +45,8 @@ class Agent(abc.ABC):
         if self.render_i != 0:
             return
 
+        timer.start()
+
         self.ax.cla()
 
         self.ax.tick_params(labelrotation=45)
@@ -62,6 +64,13 @@ class Agent(abc.ABC):
         if self.first_render: 
             plt.legend()
             self.first_render = False
+        
+        elapsed = timer.get_elapsed()
+        x = self.render_n/elapsed
+        if x < 200:
+            self.render_n += int((100/x-1)*self.render_n-1)
+        else:
+            self.render_n = int(max(1, self.render_n/x))
 
     @abc.abstractmethod
     def _update(self, new_data=None): pass
