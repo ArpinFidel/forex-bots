@@ -18,26 +18,35 @@ from helpers import timer
 
 matplotlib.rcParams['timezone'] = 'Asia/Jakarta'
 
-# TODO: 10/9 harga beli
-
 class Agent(abc.ABC):
     buy_signal = 1
     sell_signal = -1
+    speed = 200
 
     def __init__(self, df, fig=None, ax=None):
         self.df = df
+        
+        self.stop_loss   = -.0004
+        self.take_profit =  .0020
+        self.space_order = 12
+        self.space_loss  = 9
+        self.space_buy_loss   = 0
+        self.space_sell_loss  = 0
 
         self.fig = fig
         self.ax = ax
         self.render_n = 10
         self.render_i = 0
         
+        self.max_loss_duration = 1
+
         self.do_render = True
         if fig is None or ax is None:
             self.do_render = False
         self.first_render = True
         self.signals = []
         self.signal = 0
+        self.asdf=[]
 
     @log.has_log
     def render(self):
@@ -51,13 +60,14 @@ class Agent(abc.ABC):
 
         self.ax.tick_params(labelrotation=45)
         self.ax.xaxis.set_major_formatter(pldate.DateFormatter('%H:%M'))
-        self.ax.xaxis.set_major_locator(plticker.MultipleLocator(base=0.03))
+        # self.ax.xaxis.set_major_locator(plticker.MultipleLocator(base=0.03))
 
-        self.buy_sig  = [i for i, state in enumerate(self.signals) if state == Agent.buy_signal ]# and (i==0 or self.signals[i-1]!=self.signals[i])]
-        self.sell_sig = [i for i, state in enumerate(self.signals) if state == Agent.sell_signal]# and (i==0 or self.signals[i-1]!=self.signals[i])]
+        buy_sig  = [i for i, state in enumerate(self.signals) if state == Agent.buy_signal ]# and (i==0 or self.signals[i-1]!=self.signals[i])]
+        sell_sig = [i for i, state in enumerate(self.signals) if state == Agent.sell_signal]# and (i==0 or self.signals[i-1]!=self.signals[i])]
         self.ax.plot(self.df.close, color='k', lw=1.)
-        self.ax.plot(self.df.close, '^', markersize=10, color='g', label = 'buying signal',  markevery = self.buy_sig)
-        self.ax.plot(self.df.close, 'v', markersize=10, color='r', label = 'selling signal', markevery = self.sell_sig)
+        self.ax.plot(self.asdf, color='r', lw=1.)
+        self.ax.plot(self.df.close, '^', markersize=10, color='g', label = 'buying signal',  markevery = buy_sig)
+        self.ax.plot(self.df.close, 'v', markersize=10, color='r', label = 'selling signal', markevery = sell_sig)
 
         plt.pause(0.001)
 
@@ -67,8 +77,8 @@ class Agent(abc.ABC):
         
         elapsed = timer.get_elapsed()
         x = self.render_n/elapsed
-        if x < 200:
-            self.render_n += int((100/x-1)*self.render_n-1)
+        if x < Agent.speed:
+            self.render_n += int((Agent.speed/x-1)*self.render_n-1)
         else:
             self.render_n = int(max(1, self.render_n/x))
 
