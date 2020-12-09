@@ -23,7 +23,7 @@ class Agent(abc.ABC):
     sell_signal = -1
     speed = 200
 
-    def __init__(self, df, fig=None, ax=None):
+    def __init__(self, df, fig=None, ax=None, do_render=True):
         self.df = df
         
         self.stop_loss   = -.0004
@@ -36,11 +36,11 @@ class Agent(abc.ABC):
         self.fig = fig
         self.ax = ax
         self.render_n = 10
-        self.render_i = 0
+        self.render_i = -1
         
         self.max_loss_duration = 1
 
-        self.do_render = True
+        self.do_render = do_render
         if fig is None or ax is None:
             self.do_render = False
         self.first_render = True

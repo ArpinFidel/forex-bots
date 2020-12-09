@@ -23,25 +23,25 @@ from helpers import timer
 @Agent.register
 class MACD(Agent):
     skip_data = 4
-    def __init__(self, df, fig=None, ax=None):
-        super().__init__(df, fig, ax)
+    def __init__(self, df, fig=None, ax=None, do_render=True):
+        super().__init__(df, fig, ax, do_render)
         
-        self.stop_loss   = -.0005
-        self.take_profit =  .0020
-        self.space_order = 25
+        self.stop_loss   = -.0004
+        self.take_profit =  .0013
+        self.space_order = 10
         self.space_loss  = 6
 
         self.skip_data = 0
-        self.max_loss_duration = 7
+        self.max_loss_duration = 360
         
-        self.space_buy_loss   = 16
-        self.space_sell_loss  = 16
+        self.space_buy_loss   = 15
+        self.space_sell_loss  = 15
 
     # TODO: opti mize
     @log.has_log
     def macd(self, fast=12, slow=26, signal=9):
-        mean = self.df.close.mean()
-        if abs(self.df.close.iloc[-1]-mean) < .00025*mean:
+        mean = self.df.close[-50:].mean()
+        if abs(self.df.close.iloc[-1]-mean) < .0005*mean:
             return
 
         # fast
@@ -53,11 +53,11 @@ class MACD(Agent):
         signal_line = macd.ewm(span=signal, adjust=False).mean()
         signal = macd - signal_line
 
-        if abs(signal[-20:].max()) < abs(signal.max())*0.25:
-            return
-        
         self.asdf = signal*100000
 
+        # if abs(signal[-20:].max()) < abs(signal.max())*0.40:
+        #     return
+        
         sign = signal.iloc[-1]/abs(signal.iloc[-1])
         for i in range(2, 4):
             if signal.iloc[-i]/abs(signal.iloc[-i]) != sign:
@@ -117,7 +117,7 @@ class MACD(Agent):
         if new_data is not None:
             # self.skip_data = (self.skip_data+len(new_data)) % MACD.skip_data
             # if self.skip_data != 0: return
-            self.df = self.df.append(new_data)
+            self.df = self.df.append(new_data, ignore_index=True)
             self.df = self.df[-200:]
 
         self.macd()

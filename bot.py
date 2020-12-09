@@ -9,24 +9,36 @@ import matplotlib.animation as anim
 import matplotlib.dates as pldate
 import matplotlib.pyplot as plt
 import matplotlib.ticker as plticker
+import MetaTrader5 as mt5
 import pandas as pd
 import requests
 
 import abcd
 import macd
+import repo
 from agent import Agent
 from helpers import logger as log
 from helpers import timer
+from order import Order
 
 
 class Bot:
     max_open = 2
     speed = 200
 
-    def __init__(self, name, agent, data, fig, ax, render_n=1, a_fig=None, a_ax=None):
+    def __init__(self, pair, name, agent, data, fig, ax, 
+        render_n=1, 
+        a_fig=None, 
+        a_ax=None, 
+        do_render=True,
+        do_real=True,
+    ):
+        self.pair = pair
         self.name = name
-        self.agent = agent(data, a_fig, a_ax)
         self.data = data
+
+        self.pair_id = repo.get_pair_id(pair)
+        self.agent = agent(data, a_fig, a_ax, do_render=do_render)
 
         self.stop_loss   = self.agent.stop_loss
         self.take_profit = self.agent.take_profit
@@ -35,11 +47,15 @@ class Bot:
         self.space_buy_loss     = self.agent.space_buy_loss
         self.space_sell_loss    = self.agent.space_sell_loss
         self.max_loss_duration  = self.agent.max_loss_duration
+        self.lot = 0.01
 
         self.fig = fig
-        self.ax = ax
-        self.render_n = render_n
-        self.render_i = 0
+        self.ax  = ax
+        self.render_i  = -1
+        self.render_n  = render_n
+        self.do_render = do_render
+
+        self.do_real = do_real
 
         self.gains = [0, 0]
         self.min_gain = 0
@@ -56,67 +72,23 @@ class Bot:
         self.since_buy_loss   = self.space_buy_loss
         self.since_sell_loss  = self.space_sell_loss
         self.history=[0 for i in range(len(data))]
-        
-    class Order:
-        type_buy  = 0
-        type_sell = 1
 
-        def __init__(self, bot, price, order_type):
-            self.type = order_type
-            self.age = 0
-            
-            self.price = price
-            self.avg_price = price
-            self.new_price = 0
-            self.last_price = 0
-            
-            self.bot = bot
-            self.stop_loss = bot.stop_loss
-            self.take_profit = bot.take_profit
-            self.tp_decrement = .004*self.take_profit
-            self.sl_decrement = .0005*self.stop_loss
-
-            self.loss_duration = 0
-            self.max_loss_duration = bot.max_loss_duration
-        def update(self, new_price):
-            self.age += 1
-            self.new_price = new_price
-            if self.age > 20 \
-            and (self.avg_price-new_price)/self.avg_price < 0.005:
-                self.take_profit = max(-1*self.stop_loss, self.take_profit-self.tp_decrement)
-                self.stop_loss = min(0, self.stop_loss-self.sl_decrement)
-            self.avg_price = (.9*self.age*self.avg_price+new_price)/(.9*self.age+1)
-            self.last_price = new_price
-        def get_gain(self):
-            gain = 0
-            if self.type == Bot.Order.type_buy:
-                gain = (self.new_price-self.price)/self.price
-                if gain > 1: gain -= 1
-            else:
-                gain = self.price/self.new_price
-                if gain < 1: gain = gain-1
-                else: gain -= 1
-            gain = min(gain, self.bot.take_profit)
-            gain = max(gain, self.bot.stop_loss)
-            return gain
-        def is_stop(self):
-            if self.get_gain() < self.stop_loss:
-                self.loss_duration += 1
-                if self.loss_duration > self.max_loss_duration:
-                    return True
-            else:
-                self.loss_duration = 0
-            return False
-        def is_take(self):
-            return self.get_gain() > self.take_profit
-
-    def buy(self, price):
+    def order(self, order_type):
+        # tick = mt5.symbol_info_tick(self.pair)
+        # if order_type == Order.type_buy:
+        #     price = tick.ask
+        # else:
+        #     price = tick.bid
+        price = self.data.close.iloc[-1]
         self.since_order = 0
-        self.open.append(self.Order(self, price, self.Order.type_buy))
-
-    def sell(self, price): 
-        self.since_order = 0
-        self.open.append(self.Order(self, price, self.Order.type_sell))
+        order = Order(self, price, order_type)
+        if self.do_real:
+            send = self.send_open_order(order)
+            if not send: return False
+            order.ticket = send
+        self.open.append(order)
+        order.db_id = repo.insert_order(self, order)
+        return order
 
     def close(self, order):
         self.closed.append(order)
@@ -127,27 +99,19 @@ class Bot:
             self.lose_n[order.type] += 1
         else:
             self.win_n[order.type] += 1
-
-    def update(self, data):
-        signal = self.agent.update(data)
-        
-        if(len(self.data)>1200):
-            self.data = self.data[-800:]
-            self.history = self.history[-800:]
-        
-        self.data = self.data.append(data)
-        self.since_order += 1
-        self.since_loss  += 1
-        self.since_buy_loss  += 1
-        self.since_sell_loss += 1
-
-        price = data.close.iloc[-1]
-
+        if self.do_real:
+            ok = self.send_close_order(order)
+            if not ok: return False
+        repo.close_order(order)
+        return True
+    
+    def check_stops(self, price, update_avg=True):
+        if len(self.open) > 0:
+            print("OPEN:", len(self.open))
         for i, order in enumerate(self.open):
-            order.update(price)
+            order.update(price, update_avg)
 
-            # print(self.data.index[-1], end='')
-            # print(" GAIN: %+.4f TP: %.4f"%(order.get_gain(), order.take_profit))
+            print(order)
 
             if order.is_stop() or order.is_take():
                 self.close(order)
@@ -155,40 +119,138 @@ class Bot:
 
                 if order.is_stop():
                     self.since_loss = 0
-                    if order.type == Bot.Order.type_buy:
+                    if order.type == Order.type_buy:
                         self.since_buy_loss = 0
                     else:
                         self.since_sell_loss = 0
                 
-                print("CLOSE %s: %s: %.4f %.5f"%("buy" if order.type == 0 else "sell", "LOSE" if order.is_stop() else "WIN", order.get_gain(), (order.price-order.new_price)))
+                # print(self.data.time.iloc[-1])
+                print("CLOSE %s: %s"%("buy " if order.type == 0 else "sell", "LOSE" if order.is_stop() else "WIN"))
                 print("TOTAL %.4f"%sum(self.gains))
                 if self.win_n[0]+self.lose_n[0] > 0:
                     print("BUY : {:4d} {:4d} = {:.3f} {:.3f}".format(self.win_n[0], self.lose_n[0], self.win_n[0]/(self.win_n[0]+self.lose_n[0]), self.lose_n[0]/(self.win_n[0]+self.lose_n[0])))
                 if self.win_n[1]+self.lose_n[1] > 0:
                     print("SELL: {:4d} {:4d} = {:.3f} {:.3f}".format(self.win_n[1], self.lose_n[1], self.win_n[1]/(self.win_n[1]+self.lose_n[1]), self.lose_n[1]/(self.win_n[1]+self.lose_n[1])))
-                print("MIN %.4f"%self.min_gain)
-                print("MAX %.4f"%self.max_gain)
-                time.sleep(0.5)
+                print("MIN %+.4f"%self.min_gain)
+                print("MAX %+.4f"%self.max_gain)
+                print()
+                # time.sleep(0.5)
+        if len(self.open) > 0: print()
 
-        if len(self.open) < Bot.max_open \
+    def update(self, data, shutdown=False):
+        signal = self.agent.update(data)
+
+        if(len(self.data)>1200):
+            self.data = self.data[-800:]
+            self.history = self.history[-800:]
+        
+        self.data = self.data.append(data, ignore_index=True)
+        
+        # print(self.data.time.iloc[-1], self.data.close.iloc[-1])
+        # print("OPEN:",len(self.open))
+
+        self.since_order += 1
+        self.since_loss  += 1
+        self.since_buy_loss  += 1
+        self.since_sell_loss += 1
+
+        price = data.close.iloc[-1]
+
+        self.check_stops(price)
+            
+        if not shutdown \
+        and len(self.open) < Bot.max_open \
         and (len(self.open) == 0 or self.since_order > self.space_order) \
         and self.since_loss > self.space_loss:
             if signal == Agent.buy_signal \
             and self.since_buy_loss > self.space_buy_loss:
                 self.history.append(signal)
-                self.buy(price)
+                self.order(Order.type_buy)
                 print("BUY")
             elif signal == Agent.sell_signal \
             and self.since_sell_loss > self.space_sell_loss:
                 self.history.append(signal)
-                self.sell(price)
+                self.order(Order.type_sell)
                 print("SELL")
             else:
                 self.history.append(0)
         else:
             self.history.append(0)
 
-        self.render()
+        if self.do_render: self.render()
+
+    def send_open_order(self, order):
+        request = {
+            "action": mt5.TRADE_ACTION_DEAL,
+            "type": mt5.ORDER_TYPE_BUY if order.type==Order.type_buy else mt5.ORDER_TYPE_SELL,
+
+            "symbol": self.pair,
+            "volume": self.lot,
+            "price": order.price,
+
+            "sl": order.get_mt5_sl(),
+            "tp": order.get_mt5_tp(),
+            "deviation": 30,
+
+            "magic": 234012,
+            "comment": "python script open",
+            "type_time": mt5.ORDER_TIME_GTC,
+            "type_filling": mt5.ORDER_FILLING_FOK,
+        }
+        
+        result = mt5.order_send(request)
+        if result.retcode != mt5.TRADE_RETCODE_DONE:
+            print('order_send failed: retcode={}'.format(result.retcode))
+            for k, v in result._asdict().items():
+                print('   {}={}'.format(k, v))
+                if k=='request':
+                    for k, v in v._asdict().items():
+                        print('       traderequest: {}={}'.format(k, v))
+            return False
+
+        print("ORDER SUCCESS")
+        order.ticket = result.order
+        return result.order
+
+    def send_close_order(self, order):
+        deviation=50
+        
+        tick = mt5.symbol_info_tick(self.pair)
+        if order.type == Order.type_buy:
+            price = tick.bid
+        else:
+            price = tick.ask
+
+        request={
+            "action": mt5.TRADE_ACTION_DEAL,
+            "type": mt5.ORDER_TYPE_SELL if order.type == Order.type_buy else mt5.ORDER_TYPE_BUY,
+            "position": order.ticket,
+            "symbol": self.pair,
+
+            "price": price,
+            "volume": self.lot,
+            "deviation": deviation,
+
+            "magic": 234000,
+            "type_time": mt5.ORDER_TIME_GTC,
+            "type_filling": mt5.ORDER_FILLING_RETURN,
+            "comment": "close",
+        }
+        result = mt5.order_send(request)
+
+        if result.retcode != mt5.TRADE_RETCODE_DONE:
+            print("order_send failed: retcode={}".format(result.retcode))
+            print("   result", result)
+            return False
+
+        for k, v in result._asdict().items():
+            print("   {}={}".format(k, v))
+            if k == "request":
+                for k, v in v._asdict().items():
+                    print("       traderequest: {}={}".format(k, v))
+        print("CLOSE SUCCESS")
+        return True
+        
 
     @log.has_log
     def render(self):
